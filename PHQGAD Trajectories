@@ -124,3 +124,187 @@ p_combined <- p_phq / p_gad
 
 ggsave(file.path(data_dir, "trajectories.png"), 
        p_combined, width = 12, height = 8, dpi = 300)
+
+
+
+
+
+
+
+
+
+library(tidyverse)
+library(patchwork)
+
+# ── 0. Load ───────────────────────────────────────────────────────────────────
+data_dir <- "C:/Users/jowjo/OneDrive/Desktop/ALL NYSPI/Work for Adi/Clinical Trajectories 052726"
+
+df <- read_csv(file.path(data_dir, "PHQGADPSS data.csv"))
+
+# ── 1. Groups ─────────────────────────────────────────────────────────────────
+df <- df %>%
+  filter(groupe_delivery %in% c(1, 2, 3)) %>%
+  mutate(group = factor(case_when(
+    groupe_delivery == 1 ~ "Healthy Control",
+    groupe_delivery == 2 ~ "PMD",
+    groupe_delivery == 3 ~ "SSRI"
+  ), levels = c("Healthy Control", "PMD", "SSRI")))
+
+# ── 2. Column maps ────────────────────────────────────────────────────────────
+timepoint_map <- tribble(
+  ~phq_col,                          ~gad_col,                              ~ga_col,
+  "phq_score_en",                    "score_gad7_v1_en",                    "ga_weeks_1phq9",
+  "score_phq_m1_en_v3_1m",           "scrore_gad7_pg_en_1m",               "age_month_mq_en_1m_2",
+  "score_phq_m1_en_v3_1m_2m",        "scrore_gad7_pg_en_1m_2m",            "age_month_mq_en_1m_2_2m",
+  "score_phq_m1_en_v3_1m_2m3m",      "scrore_gad7_pg_en_1m_2m3m",          "age_month_mq_en_1m_2_2m3m",
+  "score_phq_m1_en_v3_1m_2m3m3m",    "scrore_gad7_pg_en_1m_2m3m3m",        "age_month_mq_en_1m_2_2m3m3m",
+  "score_phq_m1_en_v3_5m",           "scrore_gad7_pg_en_1m_08a50e",        "age_month_mq_en",
+  "score_phq_m1_en_v3_5m6m",         "scrore_gad7_pg_en_1m_08a50e6m",      "age_month_mq_en6m",
+  "score_phq_m1_en_v3_5m6m7m",       "scrore_gad7_pg_en_1m_08a50e6m7m",    "age_month_mq_en6m7m",
+  "score_phq_m8",                    "scrore_gad7_m8",                      "age_month_mq_en6m7m8m",
+  "score_phq_m8_m9",                 "scrore_gad7_m8_m9",                   "age_month_mq_en6m7m8m_m9",
+  "score_phq_m8_m10",                "scrore_gad7_m8_m10",                  "age_month_mq_en6m7m8m_m10",
+  "score_phq_m8_m11",                "scrore_gad7_m8_m11",                  "age_month_mq_en6m7m8m_m11",
+  "score_phq_m8_m12",                "scrore_gad7_m8_m12",                  "age_month_mq_en6m7m8m_m12",
+  "score_phq_m8_m13",                "scrore_gad7_m8_m13",                  "age_month_mq_en6m7m8m_m13",
+  "score_phq_m8_m14",                "scrore_gad7_m8_m14",                  "age_month_mq_en6m7m8m_m14",
+  "score_phq_m8_m15",                "scrore_gad7_m8_m15",                  "age_month_mq_en6m7m8m_m15",
+  "score_phq_m8_m16",                "scrore_gad7_m8_m16",                  "age_month_mq_en6m7m8m_m16",
+  "score_phq_m8_m17",                "scrore_gad7_m8_m17",                  "age_month_mq_en6m7m8m_m17",
+  "score_phq_m8_m18",                "scrore_gad7_m8_m18",                  "age_month_mq_en6m7m8m_m18",
+  "score_phq_m8_m19",                "scrore_gad7_m8_m19",                  "age_month_mq_en6m7m8m_m19",
+  "score_phq_m8_m9_m20",             "scrore_gad7_m8_m9_m20",               "age_month_mq_en6m7m8m_m9_m20",
+  "score_phq_m8_m21",                "scrore_gad7_m8_m21",                  "age_month_mq_en6m7m8m_m21",
+  "score_phq_m8_m22",                "scrore_gad7_m8_m22",                  "age_month_mq_en6m7m8m_m22",
+  "score_phq_m8_m23",                "scrore_gad7_m8_m23",                  "age_month_mq_en6m7m8m_m23",
+  "score_phq_m8_m24",                "scrore_gad7_m8_m24",                  "age_month_mq_en6m7m8m_m24",
+  "score_phq_m8_m25",                "scrore_gad7_m8_m25",                  "age_month_mq_en6m7m8m_m25",
+  "score_phq_m8_m26",                "scrore_gad7_m8_m26",                  "age_month_mq_en6m7m8m_m26",
+  "score_phq_m8_m27",                "scrore_gad7_m8_m27",                  "age_month_mq_en6m7m8m_m27",
+  "score_phq_m8_m28",                "scrore_gad7_m8_m28",                  "age_month_mq_en6m7m8m_m28",
+  "score_phq_m8_m29",                "scrore_gad7_m8_m29",                  "age_month_mq_en6m7m8m_m29",
+  "score_phq_m8_30",                 "scrore_gad7_m8_30",                   "age_month_mq_en6m7m8m_30"
+)
+
+# ── 3. Pivot to long ──────────────────────────────────────────────────────────
+long_data <- pmap_dfr(timepoint_map, function(phq_col, gad_col, ga_col) {
+  cols_needed <- c(phq_col, gad_col, ga_col)
+  if (!all(cols_needed %in% names(df))) {
+    message("Skipping — column(s) not found: ",
+            paste(cols_needed[!cols_needed %in% names(df)], collapse = ", "))
+    return(NULL)
+  }
+  df %>%
+    select(redcap_id, group,
+           phq   = all_of(phq_col),
+           gad   = all_of(gad_col),
+           ga_wk = all_of(ga_col))
+}) %>%
+  filter(!is.na(ga_wk))
+
+# ── 4. N labels ───────────────────────────────────────────────────────────────
+n_labels <- df %>%
+  count(group) %>%
+  mutate(label = paste0(as.character(group), "\n(n = ", n, ")"),
+         label = factor(label, levels = label))
+
+long_data <- long_data %>%
+  left_join(n_labels %>% select(group, label), by = "group")
+
+# ── 5. Colors ─────────────────────────────────────────────────────────────────
+group_colors <- c(
+  "Healthy Control" = "#4CAF8E",
+  "PMD"             = "#7B9EC9",
+  "SSRI"            = "#9B7DB5"
+)
+
+color_map <- setNames(
+  group_colors[as.character(n_labels$group)],
+  as.character(n_labels$label)
+)
+
+# ── 6. Spaghetti plot function ────────────────────────────────────────────────
+# zoom_window: if NULL = full timeline; if c(0, 45) = perinatal zoom
+spaghetti_plot <- function(data, score_col, y_label, y_max, color_map,
+                           title = NULL, zoom_window = NULL) {
+  
+  plot_data <- data %>% filter(!is.na(.data[[score_col]]))
+  
+  if (!is.null(zoom_window)) {
+    plot_data <- plot_data %>%
+      filter(ga_wk >= zoom_window[1], ga_wk <= zoom_window[2])
+  }
+  
+  p <- plot_data %>%
+    ggplot(aes(x = ga_wk, y = .data[[score_col]],
+               group = redcap_id, color = label)) +
+    geom_line(alpha = 0.2, linewidth = 0.3) +
+    geom_smooth(
+      aes(group = label),
+      method    = "loess",
+      se        = FALSE,
+      linewidth = 1.2,
+      color     = "black"
+    ) +
+    facet_wrap(~ label, nrow = 1) +
+    scale_color_manual(values = color_map, guide = "none") +
+    scale_y_continuous(limits = c(0, y_max)) +
+    theme_bw(base_size = 11) +
+    theme(
+      strip.background = element_blank(),
+      strip.text       = element_text(face = "bold"),
+      panel.grid.minor = element_blank()
+    )
+  
+  # x axis label only on bottom row; strip labels only on top row
+  if (!is.null(zoom_window)) {
+    p <- p +
+      labs(x = "Gestational age (weeks)", y = y_label, title = title) +
+      scale_x_continuous(limits = zoom_window)
+  } else {
+    p <- p +
+      labs(x = NULL, y = y_label, title = title) +
+      theme(strip.text = element_text(face = "bold"))
+  }
+  
+  p
+}
+
+# ── 7. Build per-instrument figures ──────────────────────────────────────────
+make_instrument_figure <- function(score_col, y_label, y_max, instrument_title) {
+  
+  p_full <- spaghetti_plot(
+    long_data, score_col, y_label, y_max, color_map,
+    title       = "Full timeline",
+    zoom_window = NULL
+  )
+  
+  p_zoom <- spaghetti_plot(
+    long_data, score_col, y_label, y_max, color_map,
+    title       = "Perinatal window (0\u201345 weeks GA)",
+    zoom_window = c(0, 45)
+  )
+  
+  (p_full / p_zoom) +
+    plot_annotation(
+      title = instrument_title,
+      theme = theme(
+        plot.title = element_text(face = "bold", color = "#2A9D8F", size = 14)
+      )
+    )
+}
+
+p_phq <- make_instrument_figure(
+  "phq", "PHQ-9 Sum Score", 27, "Depressive Symptoms (PHQ-9)"
+)
+
+p_gad <- make_instrument_figure(
+  "gad", "GAD-7 Sum Score", 21, "Anxiety Symptoms (GAD-7)"
+)
+
+# ── 8. Save ───────────────────────────────────────────────────────────────────
+ggsave(file.path(data_dir, "trajectories_PHQ.png"),
+       p_phq, width = 12, height = 9, dpi = 300)
+
+ggsave(file.path(data_dir, "trajectories_GAD.png"),
+       p_gad, width = 12, height = 9, dpi = 300)
