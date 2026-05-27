@@ -114,24 +114,32 @@ p_lang <- violin_plot(bayley, "bayley_lang_stan", "Standard Score",
 p_mot  <- violin_plot(bayley, "bayley_mot_stan",  "Standard Score",
                       "Bayley Motor",     bayley_colors, ref_line = 100)
 
-# ── 6. BITSEA plots ───────────────────────────────────────────────────────────
-p_prob <- violin_plot(bitsea, "bitsea_prob", "Problem Score",
-                      "BITSEA Problem",    bitsea_colors)
-p_comp <- violin_plot(bitsea, "bitsea_comp", "Competence Score",
-                      "BITSEA Competence", bitsea_colors)
+# ── 6. Combine ────────────────────────────────────────────────────────────────
 
-# ── 7. Combine and save ───────────────────────────────────────────────────────
-p_bayley_row <- (p_cog | p_lang | p_mot)
-p_bitsea_row <- (p_prob | p_comp)
-
-p_combined <- (p_bayley_row / p_bitsea_row) +
-  plot_layout(heights = c(1, 1)) +
+# Main figure: Bayley Cognitive same width as BITSEA panels, blank top-right
+p_main <- (p_cog | plot_spacer()) / (p_prob | p_comp) +
+  plot_layout(heights = c(1, 1), widths = c(1, 1)) +
   plot_annotation(
-    title    = "Offspring Cognitive Measures at 24 Months",
-    theme    = theme(
+    title = "Offspring Cognitive Measures at 24 Months",
+    theme = theme(
       plot.title = element_text(face = "bold", color = "#2A9D8F", size = 16)
     )
   )
 
-ggsave(file.path(data_dir, "bayley_bitsea_plots.png"),
-       p_combined, width = 14, height = 10, dpi = 300)
+# Supplemental figure: Language and Motor side by side
+p_supp <- (p_lang | p_mot) +
+  plot_annotation(
+    title    = "Offspring Cognitive Measures at 24 Months — Supplemental",
+    subtitle = "Bayley Language and Motor scores (underpowered; presented for completeness)",
+    theme    = theme(
+      plot.title    = element_text(face = "bold", color = "#2A9D8F", size = 16),
+      plot.subtitle = element_text(color = "gray40", size = 11)
+    )
+  )
+
+# ── 7. Save ───────────────────────────────────────────────────────────────────
+ggsave(file.path(data_dir, "bayley_bitsea_main.png"),
+       p_main, width = 12, height = 10, dpi = 300)
+
+ggsave(file.path(data_dir, "bayley_bitsea_supplemental.png"),
+       p_supp, width = 10, height = 6, dpi = 300)
