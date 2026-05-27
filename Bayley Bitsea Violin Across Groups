@@ -143,3 +143,89 @@ ggsave(file.path(data_dir, "bayley_bitsea_main.png"),
 
 ggsave(file.path(data_dir, "bayley_bitsea_supplemental.png"),
        p_supp, width = 10, height = 6, dpi = 300)
+
+
+
+# Analyses ------------------------------------------------------------------------------
+
+
+install.packages("dunn.test")
+
+
+library(tidyverse)
+library(dunn.test)
+
+# ── 0. Load ───────────────────────────────────────────────────────────────────
+data_dir <- "C:/Users/jowjo/OneDrive/Desktop/ALL NYSPI/Work for Adi/Bayley Bitsea Plots 052726"
+
+bayley <- read_csv(file.path(data_dir, "Bayley Data.csv"))
+bitsea <- read_csv(file.path(data_dir, "Bitsea Data.csv"))
+
+# ── 1. Groups ─────────────────────────────────────────────────────────────────
+clean_groups <- function(df) {
+  df %>%
+    filter(groupe_delivery %in% c(1, 2, 3)) %>%
+    mutate(group = factor(case_when(
+      groupe_delivery == 1 ~ "Healthy Control",
+      groupe_delivery == 2 ~ "PMD",
+      groupe_delivery == 3 ~ "SSRI"
+    ), levels = c("Healthy Control", "PMD", "SSRI")))
+}
+
+bayley <- clean_groups(bayley)
+bitsea <- clean_groups(bitsea)
+
+# ── 2. Kruskal-Wallis + Dunn's function ──────────────────────────────────────
+run_kw_dunn <- function(df, score_col, label) {
+  
+  dat <- df %>% filter(!is.na(.data[[score_col]]))
+  
+  cat("\n", rep("─", 60), "\n", sep = "")
+  cat("Outcome:", label, "\n")
+  cat("N per group:\n")
+  print(dat %>% count(group) %>% as.data.frame())
+  
+  # Descriptives
+  cat("\nMedian (IQR) per group:\n")
+  desc <- dat %>%
+    group_by(group) %>%
+    summarise(
+      n      = n(),
+      median = median(.data[[score_col]], na.rm = TRUE),
+      q25    = quantile(.data[[score_col]], 0.25, na.rm = TRUE),
+      q75    = quantile(.data[[score_col]], 0.75, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    mutate(median_iqr = paste0(median, " (", q25, "–", q75, ")")) %>%
+    select(group, n, median_iqr)
+  print(as.data.frame(desc))
+  
+  # Kruskal-Wallis
+  kw <- kruskal.test(dat[[score_col]] ~ dat$group)
+  cat("\nKruskal-Wallis:\n")
+  cat("  H(", kw$parameter, ") =", round(kw$statistic, 3),
+      ", p =", round(kw$p.value, 4), "\n")
+  
+  # Dunn's post-hoc (only if KW significant)
+  if (kw$p.value < 0.05) {
+    cat("\nDunn's post-hoc test (Bonferroni correction):\n")
+    dunn.test(
+      x     = dat[[score_col]],
+      g     = dat$group,
+      method = "bonferroni",
+      kw     = FALSE,
+      label  = TRUE,
+      wrap   = FALSE
+    )
+  } else {
+    cat("\nKW not significant — Dunn's post-hoc not run.\n")
+  }
+}
+
+# ── 3. Run across all five outcomes ──────────────────────────────────────────
+run_kw_dunn(bayley, "bayley_cog_stan",  "Bayley Cognitive")
+run_kw_dunn(bayley, "bayley_lang_stan", "Bayley Language")
+run_kw_dunn(bayley, "bayley_mot_stan",  "Bayley Motor")
+run_kw_dunn(bitsea, "bitsea_prob",      "BITSEA Problem")
+run_kw_dunn(bitsea, "bitsea_comp",      "BITSEA Competence")
+
