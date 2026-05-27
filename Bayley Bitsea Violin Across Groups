@@ -1,0 +1,137 @@
+library(tidyverse)
+library(patchwork)
+
+# ── 0. Load ───────────────────────────────────────────────────────────────────
+data_dir <- "C:/Users/jowjo/OneDrive/Desktop/ALL NYSPI/Work for Adi/Bayley Bitsea Plots 052726"
+
+bayley <- read_csv(file.path(data_dir, "Bayley Data.csv"))
+bitsea <- read_csv(file.path(data_dir, "Bitsea Data.csv"))
+
+# ── 1. Groups ─────────────────────────────────────────────────────────────────
+clean_groups <- function(df) {
+  df %>%
+    filter(groupe_delivery %in% c(1, 2, 3)) %>%
+    mutate(group = factor(case_when(
+      groupe_delivery == 1 ~ "Healthy Control",
+      groupe_delivery == 2 ~ "PMD",
+      groupe_delivery == 3 ~ "SSRI"
+    ), levels = c("Healthy Control", "PMD", "SSRI")))
+}
+
+bayley <- clean_groups(bayley)
+bitsea <- clean_groups(bitsea)
+
+# ── 2. N labels ───────────────────────────────────────────────────────────────
+make_n_labels <- function(df) {
+  df %>%
+    count(group) %>%
+    mutate(label = paste0(as.character(group), "\n(n = ", n, ")"),
+           label = factor(label, levels = label))
+}
+
+bayley <- bayley %>% left_join(make_n_labels(bayley), by = "group")
+bitsea <- bitsea %>% left_join(make_n_labels(bitsea), by = "group")
+
+# ── 3. Colors ─────────────────────────────────────────────────────────────────
+group_colors <- c(
+  "Healthy Control" = "#4CAF8E",
+  "PMD"             = "#7B9EC9",
+  "SSRI"            = "#9B7DB5"
+)
+
+make_color_map <- function(df) {
+  n_lab <- make_n_labels(df %>% select(group) %>% distinct() %>% 
+                           left_join(df %>% count(group), by = "group"))
+  setNames(
+    group_colors[as.character(df %>% 
+                                distinct(group, label) %>% 
+                                arrange(group) %>% pull(group))],
+    df %>% distinct(group, label) %>% arrange(group) %>% pull(label) %>% as.character()
+  )
+}
+
+bayley_colors <- bayley %>%
+  distinct(group, label) %>%
+  arrange(group) %>%
+  { setNames(group_colors[as.character(.$group)], as.character(.$label)) }
+
+bitsea_colors <- bitsea %>%
+  distinct(group, label) %>%
+  arrange(group) %>%
+  { setNames(group_colors[as.character(.$group)], as.character(.$label)) }
+
+# ── 4. Plot function (violin + jitter) ───────────────────────────────────────
+violin_plot <- function(data, score_col, y_label, title, color_map,
+                        ref_line = NULL) {
+  
+  # n based on non-missing values for this specific score
+  plot_data <- data %>% filter(!is.na(.data[[score_col]]))
+  
+  n_labels <- plot_data %>%
+    count(group) %>%
+    mutate(label = paste0(as.character(group), "\n(n = ", n, ")"),
+           label = factor(label, levels = label))
+  
+  plot_data <- plot_data %>%
+    select(-label) %>%
+    left_join(n_labels, by = "group")
+  
+  # rebuild color map for this score's n labels
+  color_map_local <- plot_data %>%
+    distinct(group, label) %>%
+    arrange(group) %>%
+    { setNames(group_colors[as.character(.$group)], as.character(.$label)) }
+  
+  p <- plot_data %>%
+    ggplot(aes(x = label, y = .data[[score_col]], fill = label, color = label)) +
+    geom_violin(alpha = 0.3, linewidth = 0.4, trim = TRUE) +
+    geom_jitter(width = 0.12, size = 0.8, alpha = 0.5) +
+    stat_summary(fun = median, geom = "crossbar", width = 0.4,
+                 linewidth = 0.6, color = "black") +
+    scale_fill_manual(values  = color_map_local, guide = "none") +
+    scale_color_manual(values = color_map_local, guide = "none") +
+    labs(title = title, x = NULL, y = y_label) +
+    theme_bw(base_size = 11) +
+    theme(
+      strip.background = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text.x      = element_text(size = 9),
+      plot.title       = element_text(face = "bold", size = 11)
+    )
+  
+  if (!is.null(ref_line)) {
+    p <- p + geom_hline(yintercept = ref_line, linetype = "dashed",
+                        color = "gray40", linewidth = 0.5)
+  }
+  p
+}
+
+# ── 5. Bayley plots ───────────────────────────────────────────────────────────
+p_cog  <- violin_plot(bayley, "bayley_cog_stan",  "Standard Score",
+                      "Bayley Cognitive", bayley_colors, ref_line = 100)
+p_lang <- violin_plot(bayley, "bayley_lang_stan", "Standard Score",
+                      "Bayley Language",  bayley_colors, ref_line = 100)
+p_mot  <- violin_plot(bayley, "bayley_mot_stan",  "Standard Score",
+                      "Bayley Motor",     bayley_colors, ref_line = 100)
+
+# ── 6. BITSEA plots ───────────────────────────────────────────────────────────
+p_prob <- violin_plot(bitsea, "bitsea_prob", "Problem Score",
+                      "BITSEA Problem",    bitsea_colors)
+p_comp <- violin_plot(bitsea, "bitsea_comp", "Competence Score",
+                      "BITSEA Competence", bitsea_colors)
+
+# ── 7. Combine and save ───────────────────────────────────────────────────────
+p_bayley_row <- (p_cog | p_lang | p_mot)
+p_bitsea_row <- (p_prob | p_comp)
+
+p_combined <- (p_bayley_row / p_bitsea_row) +
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation(
+    title    = "Offspring Cognitive Measures at 24 Months",
+    theme    = theme(
+      plot.title = element_text(face = "bold", color = "#2A9D8F", size = 16)
+    )
+  )
+
+ggsave(file.path(data_dir, "bayley_bitsea_plots.png"),
+       p_combined, width = 14, height = 10, dpi = 300)
