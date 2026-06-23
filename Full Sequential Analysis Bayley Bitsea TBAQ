@@ -1,0 +1,658 @@
+library(tidyverse)
+library(readxl)
+library(car)
+library(ggpubr)
+
+# ── 0. Global theme ───────────────────────────────────────────────────────────
+theme_set(theme_bw(base_size = 13) +
+  theme(
+    plot.background  = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA)
+  ))
+
+# ── 1. Load ───────────────────────────────────────────────────────────────────
+data_dir    <- "C:/Users/jowjo/OneDrive/Desktop/ALL NYSPI/Work for Adi/Clinical Trajectories 052726"
+bayley_dir  <- "C:/Users/jowjo/OneDrive/Desktop/ALL NYSPI/Work for Adi/Bayley Bitsea Plots 052726"
+results_dir <- file.path(bayley_dir, "Predicting BITSEABAYLEY by phq and ssri")
+
+dir.create(results_dir, showWarnings = FALSE, recursive = TRUE)
+
+bayley       <- read_csv(file.path(bayley_dir, "Bayley Data.csv"))
+bitsea       <- read_csv(file.path(bayley_dir, "Bitsea Data.csv"))
+window_means <- read_csv(file.path(data_dir, "Trajectories by Window", "window_means.csv"))
+ssri_scores  <- read_excel(file.path(results_dir, "SSRI_Exposure_Scores_Windowed.xlsx"))
+
+# ── 2. Harmonize IDs ──────────────────────────────────────────────────────────
+bayley       <- bayley       %>% mutate(redcap_id = as.character(redcap_id))
+bitsea       <- bitsea       %>% mutate(redcap_id = as.character(redcap_id))
+window_means <- window_means %>% mutate(redcap_id = as.character(redcap_id))
+ssri_scores  <- ssri_scores  %>% mutate(redcap_id = as.character(redcap_id))
+
+# ── 3. Groups ─────────────────────────────────────────────────────────────────
+clean_groups <- function(df) {
+  df %>%
+    filter(groupe_delivery %in% c(1, 2, 3)) %>%
+    mutate(group = factor(case_when(
+      groupe_delivery == 1 ~ "Healthy Control",
+      groupe_delivery == 2 ~ "PMD",
+      groupe_delivery == 3 ~ "SSRI"
+    ), levels = c("Healthy Control", "PMD", "SSRI")))
+}
+
+bayley <- clean_groups(bayley)
+bitsea <- clean_groups(bitsea)
+
+df_raw <- read_csv(file.path(data_dir, "PHQGADPSS data.csv")) %>%
+  filter(groupe_delivery %in% c(1, 2, 3)) %>%
+  mutate(redcap_id = as.character(redcap_id))
+
+# ── 4. Build PHQ predictors ───────────────────────────────────────────────────
+timepoint_map <- tribble(
+  ~phq_col,                          ~ga_col,
+  "phq_score_en",                    "ga_weeks_1phq9",
+  "score_phq_m1_en_v3_1m",           "age_month_mq_en_1m_2",
+  "score_phq_m1_en_v3_1m_2m",        "age_month_mq_en_1m_2_2m",
+  "score_phq_m1_en_v3_1m_2m3m",      "age_month_mq_en_1m_2_2m3m",
+  "score_phq_m1_en_v3_1m_2m3m3m",    "age_month_mq_en_1m_2_2m3m3m",
+  "score_phq_m1_en_v3_5m",           "age_month_mq_en",
+  "score_phq_m1_en_v3_5m6m",         "age_month_mq_en6m",
+  "score_phq_m1_en_v3_5m6m7m",       "age_month_mq_en6m7m",
+  "score_phq_m8",                    "age_month_mq_en6m7m8m",
+  "score_phq_m8_m9",                 "age_month_mq_en6m7m8m_m9",
+  "score_phq_m8_m10",                "age_month_mq_en6m7m8m_m10",
+  "score_phq_m8_m11",                "age_month_mq_en6m7m8m_m11",
+  "score_phq_m8_m12",                "age_month_mq_en6m7m8m_m12",
+  "score_phq_m8_m13",                "age_month_mq_en6m7m8m_m13",
+  "score_phq_m8_m14",                "age_month_mq_en6m7m8m_m14",
+  "score_phq_m8_m15",                "age_month_mq_en6m7m8m_m15",
+  "score_phq_m8_m16",                "age_month_mq_en6m7m8m_m16",
+  "score_phq_m8_m17",                "age_month_mq_en6m7m8m_m17",
+  "score_phq_m8_m18",                "age_month_mq_en6m7m8m_m18",
+  "score_phq_m8_m19",                "age_month_mq_en6m7m8m_m19",
+  "score_phq_m8_m9_m20",             "age_month_mq_en6m7m8m_m9_m20",
+  "score_phq_m8_m21",                "age_month_mq_en6m7m8m_m21",
+  "score_phq_m8_m22",                "age_month_mq_en6m7m8m_m22",
+  "score_phq_m8_m23",                "age_month_mq_en6m7m8m_m23",
+  "score_phq_m8_m24",                "age_month_mq_en6m7m8m_m24",
+  "score_phq_m8_m25",                "age_month_mq_en6m7m8m_m25",
+  "score_phq_m8_m26",                "age_month_mq_en6m7m8m_m26",
+  "score_phq_m8_m27",                "age_month_mq_en6m7m8m_m27",
+  "score_phq_m8_m28",                "age_month_mq_en6m7m8m_m28",
+  "score_phq_m8_m29",                "age_month_mq_en6m7m8m_m29",
+  "score_phq_m8_30",                 "age_month_mq_en6m7m8m_30"
+)
+
+long_phq <- pmap_dfr(timepoint_map, function(phq_col, ga_col) {
+  cols_needed <- c(phq_col, ga_col)
+  if (!all(cols_needed %in% names(df_raw))) return(NULL)
+  df_raw %>% select(redcap_id, phq = all_of(phq_col), ga_wk = all_of(ga_col))
+}) %>% filter(!is.na(ga_wk), !is.na(phq))
+
+phq_t1t2  <- long_phq %>% filter(ga_wk >= 0,  ga_wk <= 26) %>%
+  group_by(redcap_id) %>% summarise(phq_t1t2  = mean(phq, na.rm = TRUE), .groups = "drop")
+phq_t3    <- long_phq %>% filter(ga_wk >  26, ga_wk <= 40) %>%
+  group_by(redcap_id) %>% summarise(phq_t3    = mean(phq, na.rm = TRUE), .groups = "drop")
+phq_ip    <- long_phq %>% filter(ga_wk >  40, ga_wk <= 46) %>%
+  group_by(redcap_id) %>% summarise(phq_ip    = mean(phq, na.rm = TRUE), .groups = "drop")
+phq_postp <- long_phq %>% filter(ga_wk >  46) %>%
+  group_by(redcap_id) %>% summarise(phq_postp = mean(phq, na.rm = TRUE), .groups = "drop")
+
+phq_predictors <- phq_t1t2 %>%
+  left_join(phq_t3,    by = "redcap_id") %>%
+  left_join(phq_ip,    by = "redcap_id") %>%
+  left_join(phq_postp, by = "redcap_id")
+
+# ── 5. SSRI windowed dose — full sample, HC/PMD = 0 ──────────────────────────
+group_lookup <- df_raw %>%
+  select(redcap_id, groupe_delivery) %>%
+  distinct() %>%
+  filter(groupe_delivery %in% c(1, 2, 3)) %>%
+  mutate(
+    redcap_id = as.character(redcap_id),
+    group = factor(case_when(
+      groupe_delivery == 1 ~ "Healthy Control",
+      groupe_delivery == 2 ~ "PMD",
+      groupe_delivery == 3 ~ "SSRI"
+    ), levels = c("Healthy Control", "PMD", "SSRI"))
+  )
+
+dose_full <- group_lookup %>%
+  left_join(ssri_scores %>% select(redcap_id, ssri_dose_t1t2, ssri_dose_t3),
+            by = "redcap_id") %>%
+  mutate(
+    ssri_dose_t1t2 = case_when(group == "SSRI" ~ ssri_dose_t1t2, TRUE ~ 0),
+    ssri_dose_t3   = case_when(group == "SSRI" ~ ssri_dose_t3,   TRUE ~ 0)
+  ) %>%
+  select(redcap_id, ssri_dose_t1t2, ssri_dose_t3)
+
+# ── 6. Merge all predictors ───────────────────────────────────────────────────
+stage_data <- phq_predictors %>%
+  left_join(group_lookup, by = "redcap_id") %>%
+  left_join(dose_full,    by = "redcap_id")
+
+bayley <- bayley %>%
+  left_join(phq_predictors, by = "redcap_id") %>%
+  left_join(dose_full,      by = "redcap_id")
+
+bitsea <- bitsea %>%
+  left_join(phq_predictors, by = "redcap_id") %>%
+  left_join(dose_full,      by = "redcap_id")
+
+# ── 7. TBAQ ───────────────────────────────────────────────────────────────────
+tbaq <- read_csv(file.path(bayley_dir, "TBAQ data.csv")) %>%
+  mutate(redcap_id = as.character(redcap_id)) %>%
+  filter(groupe_delivery %in% c(1, 2, 3)) %>%
+  mutate(group = factor(case_when(
+    groupe_delivery == 1 ~ "Healthy Control",
+    groupe_delivery == 2 ~ "PMD",
+    groupe_delivery == 3 ~ "SSRI"
+  ), levels = c("Healthy Control", "PMD", "SSRI"))) %>%
+  left_join(phq_predictors, by = "redcap_id") %>%
+  left_join(dose_full,      by = "redcap_id")
+
+# ── 8. Colors ─────────────────────────────────────────────────────────────────
+group_colors <- c(
+  "Healthy Control" = "#4CAF8E",
+  "PMD"             = "#7B9EC9",
+  "SSRI"            = "#9B7DB5"
+)
+
+# ── 9. Regression functions ───────────────────────────────────────────────────
+run_lm_unstd <- function(data, outcome, predictors, label) {
+  dat <- data %>%
+    select(redcap_id, group, all_of(outcome), all_of(predictors)) %>%
+    filter(if_all(everything(), ~ !is.na(.)))
+
+  cat("\n──", label, "(unstandardized)\n")
+  cat("N =", nrow(dat),
+      "| HC:", sum(dat$group == "Healthy Control"),
+      "| PMD:", sum(dat$group == "PMD"),
+      "| SSRI:", sum(dat$group == "SSRI"), "\n")
+
+  if (nrow(dat) < 10) { cat("  Insufficient n.\n"); return(invisible(NULL)) }
+
+  m <- lm(reformulate(predictors, response = outcome), data = dat)
+  m_sum <- summary(m)
+
+  print(as.data.frame(m_sum$coefficients) %>% round(4) %>% rownames_to_column("term"))
+  cat(sprintf("  R\u00b2=%.4f | Adj R\u00b2=%.4f | F(%d,%d)=%.3f | p=%.4f\n",
+              m_sum$r.squared, m_sum$adj.r.squared,
+              m_sum$fstatistic[2], m_sum$fstatistic[3],
+              m_sum$fstatistic[1],
+              pf(m_sum$fstatistic[1], m_sum$fstatistic[2],
+                 m_sum$fstatistic[3], lower.tail = FALSE)))
+
+  if (length(predictors) > 1) {
+    vif_vals <- vif(m)
+    print(data.frame(
+      term = names(vif_vals), VIF = round(vif_vals, 3),
+      flag = ifelse(vif_vals > 5, "HIGH", ifelse(vif_vals > 2.5, "moderate", "ok"))
+    ))
+  }
+  invisible(m)
+}
+
+run_lm_std <- function(data, outcome, predictors) {
+  dat <- data %>%
+    select(redcap_id, group, all_of(outcome), all_of(predictors)) %>%
+    filter(if_all(everything(), ~ !is.na(.)))
+  if (nrow(dat) < 10) return(invisible(NULL))
+  dat_scaled <- dat %>%
+    mutate(across(c(all_of(outcome), all_of(predictors)), ~ as.numeric(scale(.))))
+  invisible(lm(reformulate(predictors, response = outcome), data = dat_scaled))
+}
+
+# ── 10. Predictor sets ────────────────────────────────────────────────────────
+phq_m0    <- c("phq_t1t2")
+phq_m1    <- c("phq_t1t2", "phq_t3")
+phq_m2    <- c("phq_t1t2", "phq_t3", "phq_ip")
+phq_m3    <- c("phq_t1t2", "phq_t3", "phq_ip", "phq_postp")
+dose_vars <- c("ssri_dose_t1t2", "ssri_dose_t3")
+
+# ── 11. Run PHQ sequential models ────────────────────────────────────────────
+sink(file.path(results_dir, "sequential_regression_windowed_dose.txt"))
+
+cat("SEQUENTIAL MODELS — PRIMARY + SENSITIVITY (WINDOWED SSRI DOSE)\n")
+cat("Full sample: HC + PMD + SSRI (HC/PMD dose = 0)\n")
+cat(format(Sys.time(), "%Y-%m-%d %H:%M"), "\n")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 0: T3 PHQ ~ T1T2\n"); cat(rep("═", 65), "\n", sep = "")
+m0_p <- run_lm_unstd(stage_data, "phq_t3",  phq_m0, "M0-Primary")
+m0_s <- run_lm_unstd(stage_data, "phq_t3",  c(phq_m0, dose_vars), "M0-Sensitivity")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 1: IP PHQ ~ T1T2 + T3\n"); cat(rep("═", 65), "\n", sep = "")
+m1_p <- run_lm_unstd(stage_data, "phq_ip",  phq_m1, "M1-Primary")
+m1_s <- run_lm_unstd(stage_data, "phq_ip",  c(phq_m1, dose_vars), "M1-Sensitivity")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 2: POSTP PHQ ~ T1T2 + T3 + IP\n"); cat(rep("═", 65), "\n", sep = "")
+m2_p <- run_lm_unstd(stage_data, "phq_postp", phq_m2, "M2-Primary")
+m2_s <- run_lm_unstd(stage_data, "phq_postp", c(phq_m2, dose_vars), "M2-Sensitivity")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 3a: BAYLEY COGNITIVE\n"); cat(rep("═", 65), "\n", sep = "")
+m3a_p <- run_lm_unstd(bayley, "bayley_cog_stan", phq_m3, "M3a-Primary")
+m3a_s <- run_lm_unstd(bayley, "bayley_cog_stan", c(phq_m3, dose_vars), "M3a-Sensitivity")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 3b: BITSEA PROBLEM\n"); cat(rep("═", 65), "\n", sep = "")
+m3b_p <- run_lm_unstd(bitsea, "bitsea_prob", phq_m3, "M3b-Primary")
+m3b_s <- run_lm_unstd(bitsea, "bitsea_prob", c(phq_m3, dose_vars), "M3b-Sensitivity")
+
+cat("\n", rep("═", 65), "\n", sep = "")
+cat("MODEL 3c: BITSEA COMPETENCE\n"); cat(rep("═", 65), "\n", sep = "")
+m3c_p <- run_lm_unstd(bitsea, "bitsea_comp", phq_m3, "M3c-Primary")
+m3c_s <- run_lm_unstd(bitsea, "bitsea_comp", c(phq_m3, dose_vars), "M3c-Sensitivity")
+
+sink()
+
+# ── 12. Run TBAQ models ───────────────────────────────────────────────────────
+sink(file.path(results_dir, "sequential_regression_tbaq.txt"))
+
+cat("SEQUENTIAL MODELS — TBAQ OUTCOMES (M3d-M3h)\n")
+cat("Full sample: HC + PMD + SSRI (HC/PMD dose = 0)\n")
+cat(format(Sys.time(), "%Y-%m-%d %H:%M"), "\n")
+
+tbaq_outcomes <- list(
+  list(var = "activite",   label = "M3d | Activity Level"),
+  list(var = "plaisir",    label = "M3e | Pleasure"),
+  list(var = "crainte_so", label = "M3f | Social Fearfulness"),
+  list(var = "colere",     label = "M3g | Anger"),
+  list(var = "interet",    label = "M3h | Interest / Attention")
+)
+
+tbaq_models_p     <- list()
+tbaq_models_s     <- list()
+tbaq_models_p_std <- list()
+tbaq_models_s_std <- list()
+
+for (o in tbaq_outcomes) {
+  cat("\n", rep("═", 65), "\n", sep = "")
+  cat("PRIMARY:", o$label, "\n"); cat(rep("═", 65), "\n", sep = "")
+  m_p <- run_lm_unstd(tbaq, o$var, phq_m3, o$label)
+
+  cat("\n", rep("─", 65), "\n", sep = "")
+  cat("SENSITIVITY:", o$label, "\n"); cat(rep("─", 65), "\n", sep = "")
+  m_s <- run_lm_unstd(tbaq, o$var, c(phq_m3, dose_vars), paste0(o$label, " + Dose"))
+
+  tbaq_models_p[[o$var]]     <- m_p
+  tbaq_models_s[[o$var]]     <- m_s
+  tbaq_models_p_std[[o$var]] <- run_lm_std(tbaq, o$var, phq_m3)
+  tbaq_models_s_std[[o$var]] <- run_lm_std(tbaq, o$var, c(phq_m3, dose_vars))
+}
+
+sink()
+
+# ── 13. Standardized models for path diagram ──────────────────────────────────
+m0_p_std  <- run_lm_std(stage_data, "phq_t3",          phq_m0)
+m0_s_std  <- run_lm_std(stage_data, "phq_t3",          c(phq_m0, dose_vars))
+m1_p_std  <- run_lm_std(stage_data, "phq_ip",          phq_m1)
+m1_s_std  <- run_lm_std(stage_data, "phq_ip",          c(phq_m1, dose_vars))
+m2_p_std  <- run_lm_std(stage_data, "phq_postp",       phq_m2)
+m2_s_std  <- run_lm_std(stage_data, "phq_postp",       c(phq_m2, dose_vars))
+m3a_p_std <- run_lm_std(bayley,     "bayley_cog_stan",  phq_m3)
+m3a_s_std <- run_lm_std(bayley,     "bayley_cog_stan",  c(phq_m3, dose_vars))
+m3b_p_std <- run_lm_std(bitsea,     "bitsea_prob",      phq_m3)
+m3b_s_std <- run_lm_std(bitsea,     "bitsea_prob",      c(phq_m3, dose_vars))
+m3c_p_std <- run_lm_std(bitsea,     "bitsea_comp",      phq_m3)
+m3c_s_std <- run_lm_std(bitsea,     "bitsea_comp",      c(phq_m3, dose_vars))
+
+# ── 14. Outcome intercorrelations ─────────────────────────────────────────────
+sink(file.path(results_dir, "offspring_outcome_correlations.txt"))
+
+cat("=== Correlations among offspring outcomes ===\n\n")
+
+outcome_vars <- c("bayley_cog_stan", "bitsea_prob", "bitsea_comp",
+                  "activite", "plaisir", "crainte_so", "colere", "interet")
+outcome_labels <- c("Bayley Cog", "BITSEA Prob", "BITSEA Comp",
+                    "Activity", "Pleasure", "Soc. Fear", "Anger", "Interest")
+
+all_outcomes <- bayley %>%
+  select(redcap_id, bayley_cog_stan) %>%
+  full_join(bitsea %>% select(redcap_id, bitsea_prob, bitsea_comp), by = "redcap_id") %>%
+  full_join(tbaq   %>% select(redcap_id, activite, plaisir, crainte_so, colere, interet),
+            by = "redcap_id")
+
+cor_mat <- all_outcomes %>%
+  select(all_of(outcome_vars)) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  round(3)
+
+rownames(cor_mat) <- outcome_labels
+colnames(cor_mat) <- outcome_labels
+print(cor_mat)
+
+cat("\nPairwise N:\n")
+n_pairs <- sapply(outcome_vars, function(i)
+  sapply(outcome_vars, function(j)
+    sum(complete.cases(all_outcomes[, c(i, j)])))) 
+rownames(n_pairs) <- outcome_labels
+colnames(n_pairs) <- outcome_labels
+print(n_pairs)
+
+sink()
+
+# ── 15. Helpers ───────────────────────────────────────────────────────────────
+is_sig <- function(model, term) {
+  if (is.null(model)) return(FALSE)
+  coefs <- summary(model)$coefficients
+  if (!term %in% rownames(coefs)) return(FALSE)
+  coefs[term, "Pr(>|t|)"] < 0.05
+}
+
+get_std_beta <- function(std_model, term) {
+  if (is.null(std_model)) return("")
+  coefs <- summary(std_model)$coefficients
+  if (!term %in% rownames(coefs)) return("")
+  b <- round(coefs[term, "Estimate"], 2)
+  paste0("\u03b2=", b, "*")
+}
+
+get_xy <- function(id, col, nodes) nodes %>% filter(id == !!id) %>% pull(!!col)
+
+make_edge <- function(from, to, unstd_model, std_model, term, model_label, nodes) {
+  sig  <- is_sig(unstd_model, term)
+  beta <- if (sig) get_std_beta(std_model, term) else ""
+  tibble(
+    x1 = get_xy(from, "x", nodes), y1 = get_xy(from, "y", nodes),
+    x2 = get_xy(to,   "x", nodes), y2 = get_xy(to,   "y", nodes),
+    sig = sig, beta = beta, mlabel = model_label,
+    full_label = if_else(sig, paste0(model_label, ": ", beta), "")
+  ) %>% mutate(lx = (x1 + x2) / 2, ly = (y1 + y2) / 2)
+}
+
+# ── 16. Path diagram builder — full outcome set ───────────────────────────────
+build_path_full <- function(
+    m0_u, m0_s_arg, m1_u, m1_s_arg, m2_u, m2_s_arg,
+    m3a_u, m3a_s_arg, m3b_u, m3b_s_arg, m3c_u, m3c_s_arg,
+    m3d_u, m3d_s_arg, m3e_u, m3e_s_arg,
+    m3f_u, m3f_s_arg, m3g_u, m3g_s_arg, m3h_u, m3h_s_arg,
+    has_dose = FALSE, title_suffix = "") {
+
+  nodes <- tribble(
+    ~id,      ~x,    ~y,    ~label,          ~sublabel,
+    "t1t2",   1.6,   6.5,   "T1-T2 PHQ",     "(0-26 wk)",
+    "t3",     2.4,   1.5,   "T3 PHQ",        "(27-40 wk)",
+    "ip",     4.2,   6.5,   "IP PHQ",        "(40-46 wk)",
+    "postp",  6.0,   4.0,   "Postp PHQ",     "(46+ wk)",
+    "cog",    8.2,   7.8,   "Bayley",        "Cognitive",
+    "prob",   8.2,   6.4,   "BITSEA",        "Problem",
+    "comp",   8.2,   5.0,   "BITSEA",        "Competence",
+    "act",    8.2,   3.6,   "Activity",      "Level",
+    "plais",  8.2,   2.4,   "Pleasure",      "",
+    "fear",   8.2,   1.2,   "Social",        "Fearfulness",
+    "anger",  8.2,   0.0,   "Anger",         "",
+    "int",    8.2,  -1.2,   "Interest /",    "Attention"
+  )
+
+  if (has_dose) {
+    nodes <- bind_rows(
+      tibble(id = "dt1t2", x = 0.2, y = 5.5,
+             label = "Dose T1\u2013T2", sublabel = "(0-26 wk)"),
+      tibble(id = "dt3",   x = 0.2, y = 2.5,
+             label = "Dose T3",         sublabel = "(27-40 wk)"),
+      nodes
+    )
+  }
+
+  phq_edges <- bind_rows(
+    make_edge("t1t2", "t3",    m0_u,  m0_s_arg,  "phq_t1t2",  "M0",  nodes),
+    make_edge("t1t2", "ip",    m1_u,  m1_s_arg,  "phq_t1t2",  "M1",  nodes),
+    make_edge("t3",   "ip",    m1_u,  m1_s_arg,  "phq_t3",    "M1",  nodes),
+    make_edge("t1t2", "postp", m2_u,  m2_s_arg,  "phq_t1t2",  "M2",  nodes),
+    make_edge("t3",   "postp", m2_u,  m2_s_arg,  "phq_t3",    "M2",  nodes),
+    make_edge("ip",   "postp", m2_u,  m2_s_arg,  "phq_ip",    "M2",  nodes),
+    make_edge("t1t2", "cog",   m3a_u, m3a_s_arg, "phq_t1t2",  "M3a", nodes),
+    make_edge("t3",   "cog",   m3a_u, m3a_s_arg, "phq_t3",    "M3a", nodes),
+    make_edge("ip",   "cog",   m3a_u, m3a_s_arg, "phq_ip",    "M3a", nodes),
+    make_edge("postp","cog",   m3a_u, m3a_s_arg, "phq_postp", "M3a", nodes),
+    make_edge("t1t2", "prob",  m3b_u, m3b_s_arg, "phq_t1t2",  "M3b", nodes),
+    make_edge("t3",   "prob",  m3b_u, m3b_s_arg, "phq_t3",    "M3b", nodes),
+    make_edge("ip",   "prob",  m3b_u, m3b_s_arg, "phq_ip",    "M3b", nodes),
+    make_edge("postp","prob",  m3b_u, m3b_s_arg, "phq_postp", "M3b", nodes),
+    make_edge("t1t2", "comp",  m3c_u, m3c_s_arg, "phq_t1t2",  "M3c", nodes),
+    make_edge("t3",   "comp",  m3c_u, m3c_s_arg, "phq_t3",    "M3c", nodes),
+    make_edge("ip",   "comp",  m3c_u, m3c_s_arg, "phq_ip",    "M3c", nodes),
+    make_edge("postp","comp",  m3c_u, m3c_s_arg, "phq_postp", "M3c", nodes),
+    make_edge("t1t2", "act",   m3d_u, m3d_s_arg, "phq_t1t2",  "M3d", nodes),
+    make_edge("t3",   "act",   m3d_u, m3d_s_arg, "phq_t3",    "M3d", nodes),
+    make_edge("ip",   "act",   m3d_u, m3d_s_arg, "phq_ip",    "M3d", nodes),
+    make_edge("postp","act",   m3d_u, m3d_s_arg, "phq_postp", "M3d", nodes),
+    make_edge("t1t2", "plais", m3e_u, m3e_s_arg, "phq_t1t2",  "M3e", nodes),
+    make_edge("t3",   "plais", m3e_u, m3e_s_arg, "phq_t3",    "M3e", nodes),
+    make_edge("ip",   "plais", m3e_u, m3e_s_arg, "phq_ip",    "M3e", nodes),
+    make_edge("postp","plais", m3e_u, m3e_s_arg, "phq_postp", "M3e", nodes),
+    make_edge("t1t2", "fear",  m3f_u, m3f_s_arg, "phq_t1t2",  "M3f", nodes),
+    make_edge("t3",   "fear",  m3f_u, m3f_s_arg, "phq_t3",    "M3f", nodes),
+    make_edge("ip",   "fear",  m3f_u, m3f_s_arg, "phq_ip",    "M3f", nodes),
+    make_edge("postp","fear",  m3f_u, m3f_s_arg, "phq_postp", "M3f", nodes),
+    make_edge("t1t2", "anger", m3g_u, m3g_s_arg, "phq_t1t2",  "M3g", nodes),
+    make_edge("t3",   "anger", m3g_u, m3g_s_arg, "phq_t3",    "M3g", nodes),
+    make_edge("ip",   "anger", m3g_u, m3g_s_arg, "phq_ip",    "M3g", nodes),
+    make_edge("postp","anger", m3g_u, m3g_s_arg, "phq_postp", "M3g", nodes),
+    make_edge("t1t2", "int",   m3h_u, m3h_s_arg, "phq_t1t2",  "M3h", nodes),
+    make_edge("t3",   "int",   m3h_u, m3h_s_arg, "phq_t3",    "M3h", nodes),
+    make_edge("ip",   "int",   m3h_u, m3h_s_arg, "phq_ip",    "M3h", nodes),
+    make_edge("postp","int",   m3h_u, m3h_s_arg, "phq_postp", "M3h", nodes)
+  ) %>% mutate(path_type = "phq")
+
+  edges <- phq_edges
+
+  if (has_dose) {
+    dose_edges <- bind_rows(
+      make_edge("dt1t2","t3",    m0_u,  m0_s_arg,  "ssri_dose_t1t2","M0",  nodes),
+      make_edge("dt1t2","ip",    m1_u,  m1_s_arg,  "ssri_dose_t1t2","M1",  nodes),
+      make_edge("dt3",  "ip",    m1_u,  m1_s_arg,  "ssri_dose_t3",  "M1",  nodes),
+      make_edge("dt1t2","postp", m2_u,  m2_s_arg,  "ssri_dose_t1t2","M2",  nodes),
+      make_edge("dt3",  "postp", m2_u,  m2_s_arg,  "ssri_dose_t3",  "M2",  nodes),
+      make_edge("dt1t2","cog",   m3a_u, m3a_s_arg, "ssri_dose_t1t2","M3a", nodes),
+      make_edge("dt3",  "cog",   m3a_u, m3a_s_arg, "ssri_dose_t3",  "M3a", nodes),
+      make_edge("dt1t2","prob",  m3b_u, m3b_s_arg, "ssri_dose_t1t2","M3b", nodes),
+      make_edge("dt3",  "prob",  m3b_u, m3b_s_arg, "ssri_dose_t3",  "M3b", nodes),
+      make_edge("dt1t2","comp",  m3c_u, m3c_s_arg, "ssri_dose_t1t2","M3c", nodes),
+      make_edge("dt3",  "comp",  m3c_u, m3c_s_arg, "ssri_dose_t3",  "M3c", nodes),
+      make_edge("dt1t2","act",   m3d_u, m3d_s_arg, "ssri_dose_t1t2","M3d", nodes),
+      make_edge("dt3",  "act",   m3d_u, m3d_s_arg, "ssri_dose_t3",  "M3d", nodes),
+      make_edge("dt1t2","plais", m3e_u, m3e_s_arg, "ssri_dose_t1t2","M3e", nodes),
+      make_edge("dt3",  "plais", m3e_u, m3e_s_arg, "ssri_dose_t3",  "M3e", nodes),
+      make_edge("dt1t2","fear",  m3f_u, m3f_s_arg, "ssri_dose_t1t2","M3f", nodes),
+      make_edge("dt3",  "fear",  m3f_u, m3f_s_arg, "ssri_dose_t3",  "M3f", nodes),
+      make_edge("dt1t2","anger", m3g_u, m3g_s_arg, "ssri_dose_t1t2","M3g", nodes),
+      make_edge("dt3",  "anger", m3g_u, m3g_s_arg, "ssri_dose_t3",  "M3g", nodes),
+      make_edge("dt1t2","int",   m3h_u, m3h_s_arg, "ssri_dose_t1t2","M3h", nodes),
+      make_edge("dt3",  "int",   m3h_u, m3h_s_arg, "ssri_dose_t3",  "M3h", nodes)
+    ) %>% mutate(path_type = "dose")
+    edges <- bind_rows(edges, dose_edges)
+  }
+
+  edges <- edges %>%
+    mutate(ly_offset = case_when(
+      path_type == "phq"  ~ ly + 0.2,
+      path_type == "dose" ~ ly - 0.2,
+      TRUE                ~ ly
+    ))
+
+  xlim_lo  <- if (has_dose) -0.6 else 1.0
+  dividers <- if (has_dose) c(1.1, 3.2, 5.1, 7.2) else c(3.2, 5.1, 7.2)
+  col_x    <- if (has_dose) c(0.2, 2.0, 4.2, 6.0, 8.2) else c(2.0, 4.2, 6.0, 8.2)
+  col_labs <- if (has_dose) c("SSRI\nDose", "Prenatal", "Immediate\nPostpartum",
+                               "Late\nPostpartum", "Offspring\n24 months") else
+                            c("Prenatal", "Immediate\nPostpartum",
+                              "Late\nPostpartum", "Offspring\n24 months")
+
+  p <- ggplot() +
+    geom_segment(data = edges %>% filter(!sig),
+                 aes(x = x1, y = y1, xend = x2, yend = y2),
+                 color = "gray80", linewidth = 0.3,
+                 arrow = arrow(length = unit(0.16, "cm"), type = "closed")) +
+    geom_segment(data = edges %>% filter(sig),
+                 aes(x = x1, y = y1, xend = x2, yend = y2),
+                 color = "#2A9D8F", linewidth = 0.9,
+                 arrow = arrow(length = unit(0.20, "cm"), type = "closed")) +
+    geom_label(data = edges %>% filter(sig),
+               aes(x = lx, y = ly_offset, label = full_label),
+               size = 3.2, fill = "white", color = "#1A6B63",
+               label.size = 0.15, fontface = "bold",
+               label.padding = unit(0.18, "lines")) +
+    geom_label(data = nodes %>% filter(!id %in% c("dt1t2", "dt3")),
+               aes(x = x, y = y, label = paste0(label, "\n", sublabel)),
+               size = 3.8, fill = "#E8F5F3", color = "#1A6B63",
+               label.size = 0.5, fontface = "bold",
+               label.padding = unit(0.35, "lines")) +
+    geom_vline(xintercept = dividers,
+               linetype = "dashed", color = "gray75", linewidth = 0.35)
+
+  if (has_dose) {
+    p <- p + geom_label(
+      data = nodes %>% filter(id %in% c("dt1t2", "dt3")),
+      aes(x = x, y = y, label = paste0(label, "\n", sublabel)),
+      size = 3.8, fill = "#FFF3CD", color = "#1A6B63",
+      label.size = 0.5, fontface = "bold",
+      label.padding = unit(0.35, "lines")
+    )
+  }
+
+  for (i in seq_along(col_x)) {
+    p <- p + annotate("text", x = col_x[i], y = 9.2,
+                      label = col_labs[i],
+                      size = 4.2, color = "black", fontface = "bold")
+  }
+
+  p +
+    scale_x_continuous(limits = c(xlim_lo, 9.8), expand = c(0, 0)) +
+    scale_y_continuous(limits = c(-2.2, 10.0),   expand = c(0, 0)) +
+    labs(
+      title    = paste0("Sequential PHQ Prediction Model \u2014 ", title_suffix),
+      subtitle = "Teal = significant (p<0.05); gray = non-significant\nStandardized \u03b2 from separate sequential OLS models (M0\u2013M3); * p < 0.05"
+    ) +
+    theme_void(base_size = 13) +
+    theme(
+      plot.background = element_rect(fill = "white", color = NA),
+      plot.title      = element_text(face = "bold", color = "#2A9D8F", size = 15,
+                                     margin = margin(b = 5)),
+      plot.subtitle   = element_text(color = "black", size = 10,
+                                     margin = margin(b = 8)),
+      plot.margin     = margin(10, 5, 10, 5)
+    )
+}
+
+# ── 17. Generate path diagrams ────────────────────────────────────────────────
+p_full_primary <- build_path_full(
+  m0_p,  m0_p_std,  m1_p,  m1_p_std,  m2_p,  m2_p_std,
+  m3a_p, m3a_p_std, m3b_p, m3b_p_std, m3c_p, m3c_p_std,
+  tbaq_models_p[["activite"]],   tbaq_models_p_std[["activite"]],
+  tbaq_models_p[["plaisir"]],    tbaq_models_p_std[["plaisir"]],
+  tbaq_models_p[["crainte_so"]], tbaq_models_p_std[["crainte_so"]],
+  tbaq_models_p[["colere"]],     tbaq_models_p_std[["colere"]],
+  tbaq_models_p[["interet"]],    tbaq_models_p_std[["interet"]],
+  has_dose = FALSE, title_suffix = "Primary Model \u2014 Full Outcome Set"
+)
+
+p_full_sensitivity <- build_path_full(
+  m0_s,  m0_s_std,  m1_s,  m1_s_std,  m2_s,  m2_s_std,
+  m3a_s, m3a_s_std, m3b_s, m3b_s_std, m3c_s, m3c_s_std,
+  tbaq_models_s[["activite"]],   tbaq_models_s_std[["activite"]],
+  tbaq_models_s[["plaisir"]],    tbaq_models_s_std[["plaisir"]],
+  tbaq_models_s[["crainte_so"]], tbaq_models_s_std[["crainte_so"]],
+  tbaq_models_s[["colere"]],     tbaq_models_s_std[["colere"]],
+  tbaq_models_s[["interet"]],    tbaq_models_s_std[["interet"]],
+  has_dose = TRUE, title_suffix = "Sensitivity Analysis \u2014 Full Outcome Set"
+)
+
+ggsave(file.path(results_dir, "plot_path_diagram_full_primary.png"),
+       p_full_primary, width = 14, height = 10, dpi = 300, bg = "white")
+
+ggsave(file.path(results_dir, "plot_path_diagram_full_sensitivity.png"),
+       p_full_sensitivity, width = 16, height = 10, dpi = 300, bg = "white")
+
+# ── 18. Scatter plots with per-group trend lines ──────────────────────────────
+bayley_plot_data <- bayley %>%
+  filter(!is.na(bayley_cog_stan), !is.na(phq_ip), !is.na(phq_postp))
+
+bitsea_plot_data <- bitsea %>%
+  filter(!is.na(bitsea_prob), !is.na(phq_postp))
+
+scatter_theme <- theme(
+  plot.background  = element_rect(fill = "white", color = NA),
+  panel.background = element_rect(fill = "white", color = NA),
+  panel.grid.minor = element_blank(),
+  plot.title       = element_text(face = "bold", size = 12, color = "#2A9D8F"),
+  legend.position  = "none"
+)
+
+p_sc1 <- ggplot(bayley_plot_data,
+                aes(x = phq_ip, y = bayley_cog_stan, color = group, fill = group)) +
+  geom_point(alpha = 0.5, size = 1.8) +
+  geom_smooth(aes(group = group), method = "lm", se = TRUE,
+              linewidth = 0.8, alpha = 0.15) +
+  scale_color_manual(values = group_colors) +
+  scale_fill_manual(values  = group_colors) +
+  labs(title = "IP PHQ \u2192 Bayley Cognitive",
+       x = "IP PHQ-9 Mean", y = "Bayley Cognitive SS") +
+  scatter_theme
+
+p_sc2 <- ggplot(bayley_plot_data,
+                aes(x = phq_postp, y = bayley_cog_stan, color = group, fill = group)) +
+  geom_point(alpha = 0.5, size = 1.8) +
+  geom_smooth(aes(group = group), method = "lm", se = TRUE,
+              linewidth = 0.8, alpha = 0.15) +
+  scale_color_manual(values = group_colors) +
+  scale_fill_manual(values  = group_colors) +
+  labs(title = "Postp PHQ \u2192 Bayley Cognitive",
+       x = "Postp PHQ-9 Mean", y = "Bayley Cognitive SS") +
+  scatter_theme
+
+p_sc3 <- ggplot(bitsea_plot_data,
+                aes(x = phq_postp, y = bitsea_prob, color = group, fill = group)) +
+  geom_point(alpha = 0.5, size = 1.8) +
+  geom_smooth(aes(group = group), method = "lm", se = TRUE,
+              linewidth = 0.8, alpha = 0.15) +
+  scale_color_manual(values = group_colors) +
+  scale_fill_manual(values  = group_colors) +
+  labs(title = "Postp PHQ \u2192 BITSEA Problem",
+       x = "Postp PHQ-9 Mean", y = "BITSEA Problem Score") +
+  scatter_theme
+
+p_scatter <- ggarrange(p_sc1, p_sc2, p_sc3,
+                       ncol = 3, nrow = 1,
+                       common.legend = TRUE, legend = "right")
+
+p_scatter <- annotate_figure(p_scatter,
+  top = text_grob("Significant PHQ Window \u2192 Offspring Outcome Associations",
+                  face = "bold", size = 14, color = "#2A9D8F"))
+
+ggsave(file.path(results_dir, "plot_scatter_significant_pairs.png"),
+       p_scatter, width = 13, height = 5, dpi = 300, bg = "white")
+
+# ── 19. Postpartum onset ──────────────────────────────────────────────────────
+onset_data <- stage_data %>%
+  filter(!is.na(phq_t3), !is.na(phq_ip)) %>%
+  mutate(
+    low_t3   = phq_t3 < 10,
+    high_ip  = phq_ip >= 10,
+    pp_onset = low_t3 & high_ip
+  )
+
+sink(file.path(results_dir, "postpartum_onset_counts.txt"))
+cat("=== Postpartum Onset: PHQ T3 < 10 and IP >= 10 ===\n")
+cat("Total with T3 and IP data:", nrow(onset_data), "\n\n")
+
+cat("Overall:\n")
+print(onset_data %>%
+  summarise(n_total = n(), n_low_t3 = sum(low_t3), n_high_ip = sum(high_ip),
+            n_pp_onset = sum(pp_onset),
+            pct_pp_onset = round(mean(pp_onset) * 100, 1)) %>%
+  as.data.frame())
+
+cat("\nBy group:\n")
+print(onset_data %>%
+  group_by(group) %>%
+  summarise(n_total = n(), n_low_t3 = sum(low_t3), n_high_ip = sum(high_ip),
+            n_pp_onset = sum(pp_onset),
+            pct_pp_onset = round(mean(pp_onset) * 100, 1), .groups = "drop") %>%
+  as.data.frame())
+sink()
+
+message("All outputs saved to: ", results_dir)
